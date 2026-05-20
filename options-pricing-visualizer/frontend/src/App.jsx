@@ -84,7 +84,29 @@ export default function App() {
     };
   }, [history]);
 
-  // CSV export will be added in a later commit; keep UI minimal for now.
+  function downloadHistoryCsv(points, symbol) {
+    if (!points || points.length === 0) {
+      return;
+    }
+
+    const rows = ["date,close,adjusted_close,volume"];
+    points.forEach((point) => {
+      rows.push([
+        point.date,
+        point.close,
+        point.adjusted_close,
+        point.volume
+      ].join(","));
+    });
+
+    const blob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${symbol.toUpperCase()}-history.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
 
   useEffect(() => {
     let isMounted = true;
@@ -354,7 +376,14 @@ export default function App() {
             <div className="pill">
               {historyStatus.loading ? "Loading..." : historyStatus.error || "Alpha Vantage"}
             </div>
-            {/* CSV export button removed for initial scaffold */}
+            <button
+              type="button"
+              className="export-button"
+              onClick={() => downloadHistoryCsv(historyData, historyPayload.symbol)}
+              disabled={!historyData.length}
+            >
+              Export CSV
+            </button>
           </div>
         </div>
         <HistoricalChart
