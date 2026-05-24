@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from .bs import SUPPORTED_GREEKS, price_and_greeks
+from .monte_carlo import monte_carlo_price
 
 
 class OptionParams(BaseModel):
@@ -27,6 +28,11 @@ class OptionParams(BaseModel):
     time: float = Field(..., gt=0)
     dividend: float = Field(0.0, ge=-1, le=1)
     option_type: str = Field("call")
+    method: str = Field("blackscholes")
+    # Monte Carlo tuning options (used when method == 'montecarlo')
+    num_paths: int = Field(100000, ge=100, le=2000000)
+    seed: int = Field(0, ge=0)
+    antithetic: bool = Field(True)
 
 
 class CurveParams(OptionParams):
@@ -44,6 +50,12 @@ class HistoryParams(BaseModel):
 class OptionsParams(BaseModel):
     symbol: str = Field(..., min_length=1, max_length=16)
     expiration: Optional[str] = None
+
+
+class MonteCarloParams(OptionParams):
+    num_paths: int = Field(100000, ge=100, le=2000000)
+    seed: int = Field(0, ge=0)
+    antithetic: bool = Field(True)
 
 
 def _fetch_polygon_history(symbol: str, outputsize: str) -> dict[str, object]:
@@ -246,17 +258,41 @@ def price(params: OptionParams) -> dict[str, object]:
     if option_type not in {"call", "put"}:
         raise HTTPException(status_code=400, detail="option_type must be call or put")
 
-    results = price_and_greeks(
-        spot=jnp.array(params.spot),
-        strike=jnp.array(params.strike),
-        rate=jnp.array(params.rate),
-        vol=jnp.array(params.vol),
-        time=jnp.array(params.time),
-        dividend=jnp.array(params.dividend),
-        option_type=option_type,
-    )
+    method = (params.method or "montecarlo").lower()
 
-    return {"option_type": option_type, **{key: float(value) for key, value in results.items()}}
+    if method in {"montecarlo", "mc"}:
+        mc = monte_carlo_price(
+            spot=jnp.array(params.spot),
+            strike=jnp.array(params.strike),
+            rate=jnp.array(params.rate),
+            vol=jnp.array(params.vol),
+            time=jnp.array(params.time),
+            dividend=jnp.array(params.dividend),
+            option_type=option_type,
+            num_paths=int(params.num_paths),
+            seed=int(params.seed),
+            antithetic=bool(params.antithetic),
+        )
+
+        return {
+            "option_type": option_type,
+            "method": "montecarlo",
+            "price": float(mc["price"]),
+            "stderr": float(mc["stderr"]),
+            "num_paths": int(mc["num_paths"]),
+        }
+    else:
+        results = price_and_greeks(
+            spot=jnp.array(params.spot),
+            strike=jnp.array(params.strike),
+            rate=jnp.array(params.rate),
+            vol=jnp.array(params.vol),
+            time=jnp.array(params.time),
+            dividend=jnp.array(params.dividend),
+            option_type=option_type,
+        )
+
+        return {"option_type": option_type, "method": "blackscholes", **{key: float(value) for key, value in results.items()}}
 
 
 @app.post("/api/curve")
@@ -333,3 +369,31 @@ def options(params: OptionsParams) -> dict[str, object]:
         raise HTTPException(status_code=400, detail="symbol is required")
 
     return _fetch_polygon_options(symbol, expiration=params.expiration)
+
+
+@app.post("/api/montecarlo")
+def montecarlo(params: MonteCarloParams) -> dict[str, object]:
+    """Estimate option price by Monte Carlo. Returns price and stderr."""
+    option_type = params.option_type.lower()
+    if option_type not in {"call", "put"}:
+        raise HTTPException(status_code=400, detail="option_type must be call or put")
+
+    results = monte_carlo_price(
+        spot=jnp.array(params.spot),
+        strike=jnp.array(params.strike),
+        rate=jnp.array(params.rate),
+        vol=jnp.array(params.vol),
+        time=jnp.array(params.time),
+        dividend=jnp.array(params.dividend),
+        option_type=option_type,
+        num_paths=params.num_paths,
+        seed=params.seed,
+        antithetic=bool(params.antithetic),
+    )
+
+    return {
+        "option_type": option_type,
+        "price": float(results["price"]),
+        "stderr": float(results["stderr"]),
+        "num_paths": int(results["num_paths"]),
+    }

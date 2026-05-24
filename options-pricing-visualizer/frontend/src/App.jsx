@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { fetchCurve, fetchHistory, fetchPrice } from "./api";
 import GreekChart from "./components/GreekChart";
+import MonteCarloConvergence from "./components/MonteCarloConvergence";
 import HistoricalChart from "./components/HistoricalChart";
 
 const SETTINGS_STORAGE_KEY = "options-visualizer-settings";
@@ -22,7 +23,11 @@ const defaultParams = {
   vol: "0.2",
   time: "1",
   dividend: "0.0",
-  optionType: "call"
+  optionType: "call",
+  method: "blackscholes",
+  num_paths: "100000",
+  seed: "0",
+  antithetic: "true"
 };
 
 const defaultRange = {
@@ -35,6 +40,10 @@ const defaultHistory = {
   symbol: "AAPL",
   outputsize: "compact"
 };
+
+const MIN_PATHS = 100;
+const MAX_PATHS = 2000000;
+const DEFAULT_PATHS = 100000;
 
 function readUrlSettings() {
   if (typeof window === "undefined") {
@@ -54,7 +63,11 @@ function readUrlSettings() {
       vol: params.get("vol") || defaultParams.vol,
       time: params.get("time") || defaultParams.time,
       dividend: params.get("dividend") || defaultParams.dividend,
-      optionType: params.get("optionType") || defaultParams.optionType
+      optionType: params.get("optionType") || defaultParams.optionType,
+      method: params.get("method") || defaultParams.method,
+      num_paths: params.get("num_paths") || defaultParams.num_paths,
+      seed: params.get("seed") || defaultParams.seed,
+      antithetic: params.get("antithetic") || defaultParams.antithetic
     },
     range: {
       min: params.get("rangeMin") || defaultRange.min,
@@ -124,28 +137,28 @@ function saveBaselineSnapshot(snapshot) {
 }
 
 const inputHelp = {
-  spot: "Current price of the underlying stock used as the starting point for the option model.",
-  strike: "The fixed exercise price specified by the option contract.",
-  rate: "Annual risk-free interest rate. This comes from market conditions, not the stock itself.",
-  vol: "Annualized volatility estimate for the underlying stock price.",
-  time: "Time to expiration, measured in years.",
-  dividend: "Continuous dividend yield. This is a separate market assumption, not a stock-price field.",
-  optionType: "Call options gain value when the stock rises. Put options gain value when the stock falls.",
-  symbol: "Ticker symbol for the stock whose historical prices are being fetched.",
-  outputsize: "Compact returns a shorter recent history. Full returns the largest available series."
+  spot: "Current stock price.",
+  strike: "Option strike price.",
+  rate: "Annual risk-free rate.",
+  vol: "Annualized volatility.",
+  time: "Time to expiration, in years.",
+  dividend: "Continuous dividend yield.",
+  optionType: "Calls benefit from rising prices; puts benefit from falling prices.",
+  symbol: "Ticker symbol for historical prices.",
+  outputsize: "Recent history or the full available series."
 };
 
 const outputHelp = {
-  price: "Theoretical Black-Scholes price for the current inputs.",
-  delta: "Estimated change in option price for a $1 move in the stock price.",
-  gamma: "How quickly delta changes as the stock price moves.",
-  vega: "Sensitivity to volatility. This app reports vega per 1.0 volatility, not per 1%.",
-  theta: "Sensitivity to time passing. Negative values indicate time decay.",
+  price: "Option price for the current inputs.",
+  delta: "Change in price for a $1 move in the stock.",
+  gamma: "How quickly delta changes as the stock moves.",
+  vega: "Sensitivity to volatility.",
+  theta: "Sensitivity to time decay.",
   rho: "Sensitivity to interest-rate changes.",
-  livePrice: "The computed option premium using the current input values.",
-  greekCurve: "How the selected output changes as the stock price moves across the chosen range.",
-  historical: "Monthly close prices for the selected stock symbol.",
-  range: "Controls how far the spot-price curve extends around the current stock price."
+  livePrice: "Live option price for the current inputs.",
+  greekCurve: "How the selected metric changes across the spot range.",
+  historical: "Historical prices for the selected symbol.",
+  range: "Spot range used for the curve."
 };
 
 function InfoBadge({ text, label }) {
@@ -159,6 +172,29 @@ function InfoBadge({ text, label }) {
 function toNumber(value, fallback) {
   const num = Number(value);
   return Number.isFinite(num) ? num : fallback;
+}
+
+function toInt(value, fallback) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) {
+    return fallback;
+  }
+  return Math.round(num);
+}
+
+function clampInt(value, min, max, fallback) {
+  const num = toInt(value, fallback);
+  return Math.min(max, Math.max(min, num));
+}
+
+function toBool(value, fallback) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "string") {
+    return value.toLowerCase() === "true";
+  }
+  return fallback;
 }
 
 function toDaysUntilExpiration(expiration) {
@@ -232,7 +268,26 @@ export default function App() {
   const [baselineSnapshot, setBaselineSnapshot] = useState(() => loadBaselineSnapshot());
   const [shareState, setShareState] = useState({ copied: false, exported: false });
 
+  const isMonteCarlo = params.method === "montecarlo";
+
+  const updateParam = (field) => (event) => {
+    setParams((prev) => ({ ...prev, [field]: event.target.value }));
+  };
+
+  const updateRange = (field) => (event) => {
+    setRange((prev) => ({ ...prev, [field]: event.target.value }));
+  };
+
+  const updateHistory = (field) => (event) => {
+    setHistory((prev) => ({ ...prev, [field]: event.target.value }));
+  };
+
   const payload = useMemo(() => {
+    const method = (params.method || "blackscholes").toLowerCase();
+    const numPaths = clampInt(params.num_paths, MIN_PATHS, MAX_PATHS, DEFAULT_PATHS);
+    const seed = Math.max(0, toInt(params.seed, 0));
+    const antithetic = toBool(params.antithetic, true);
+
     return {
       spot: toNumber(params.spot, 100),
       strike: toNumber(params.strike, 100),
@@ -240,7 +295,11 @@ export default function App() {
       vol: toNumber(params.vol, 0.2),
       time: toNumber(params.time, 1),
       dividend: toNumber(params.dividend, 0),
-      option_type: params.optionType
+      option_type: params.optionType,
+      method,
+      num_paths: numPaths,
+      seed,
+      antithetic
     };
   }, [params]);
 
@@ -249,7 +308,7 @@ export default function App() {
     const rawMax = toNumber(range.max, payload.spot * 1.4);
     const spotMin = Math.max(0.01, Math.min(rawMin, rawMax));
     const spotMax = Math.max(spotMin * 1.05, Math.max(rawMin, rawMax));
-    const points = Math.min(200, Math.max(20, Math.round(toNumber(range.points, 80))));
+    const points = 80;
 
     return {
       ...payload,
@@ -293,6 +352,12 @@ export default function App() {
       fields
     };
   }, [baselineSnapshot, priceData]);
+
+  function safeFixed(val, digits = 6) {
+    const n = Number(val);
+    if (!Number.isFinite(n)) return "--";
+    return n.toFixed(digits);
+  }
 
   function downloadHistoryCsv(points, symbol) {
     if (!points || points.length === 0) {
@@ -463,10 +528,10 @@ export default function App() {
       <header className="hero">
         <div>
           <span className="eyebrow">Options Pricing Visualizer</span>
-          <h1>Black-Scholes built for exploration.</h1>
+          <h1>Options pricing built for exploration.</h1>
           <p>
-            Tune inputs, compare call and put sensitivity, and inspect Greeks across
-            the spot curve with D3.
+            Tune inputs, switch between Black-Scholes and Monte Carlo, and view
+            Greeks or price convergence with D3.
           </p>
         </div>
         <div className="hero-card">
@@ -475,11 +540,18 @@ export default function App() {
             <InfoBadge label="Live price help" text={outputHelp.livePrice} />
           </div>
           <div className="hero-value">
-            {priceData ? priceData.price.toFixed(4) : "--"}
+            {priceData ? safeFixed(priceData.price, 4) : "--"}
           </div>
           <div className="hero-subtext">
             {params.optionType.toUpperCase()} - Strike {params.strike}
           </div>
+            {priceData && priceData.method === "montecarlo" && (
+              <div className="hero-meta">
+                <small>
+                  standard error: {safeFixed(priceData.stderr, 6)} • paths: {priceData.num_paths}
+                </small>
+              </div>
+            )}
         </div>
       </header>
 
@@ -487,14 +559,13 @@ export default function App() {
         <div className="panel-header">
           <div className="header-title">
             <h2>Inputs</h2>
-            <InfoBadge label="Inputs help" text="These values drive the Black-Scholes pricing model." />
+            <InfoBadge label="Inputs help" text="Configure the pricing models." />
           </div>
-          <div className="status">
-            {status.loading ? "Updating..." : status.error ? status.error : "Synced"}
-          </div>
+          <div className="status">{status.loading ? "Updating..." : status.error || "Ready"}</div>
         </div>
+
         <div className="panel-grid">
-          <div className="field">
+          <div className="field small">
             <label>
               <span>Spot (S)</span>
               <InfoBadge text={inputHelp.spot} />
@@ -502,11 +573,10 @@ export default function App() {
             <input
               type="number"
               value={params.spot}
-              onChange={(event) =>
-                setParams((prev) => ({ ...prev, spot: event.target.value }))
-              }
+              onChange={updateParam("spot")}
             />
           </div>
+
           <div className="field">
             <label>
               <span>Strike (K)</span>
@@ -515,11 +585,10 @@ export default function App() {
             <input
               type="number"
               value={params.strike}
-              onChange={(event) =>
-                setParams((prev) => ({ ...prev, strike: event.target.value }))
-              }
+              onChange={updateParam("strike")}
             />
           </div>
+
           <div className="field">
             <label>
               <span>Rate (r)</span>
@@ -529,11 +598,10 @@ export default function App() {
               type="number"
               step="0.001"
               value={params.rate}
-              onChange={(event) =>
-                setParams((prev) => ({ ...prev, rate: event.target.value }))
-              }
+              onChange={updateParam("rate")}
             />
           </div>
+
           <div className="field">
             <label>
               <span>Volatility (σ)</span>
@@ -543,11 +611,10 @@ export default function App() {
               type="number"
               step="0.001"
               value={params.vol}
-              onChange={(event) =>
-                setParams((prev) => ({ ...prev, vol: event.target.value }))
-              }
+              onChange={updateParam("vol")}
             />
           </div>
+
           <div className="field">
             <label>
               <span>Time (T, years)</span>
@@ -557,11 +624,10 @@ export default function App() {
               type="number"
               step="0.01"
               value={params.time}
-              onChange={(event) =>
-                setParams((prev) => ({ ...prev, time: event.target.value }))
-              }
+              onChange={updateParam("time")}
             />
           </div>
+
           <div className="field">
             <label>
               <span>Dividend (q)</span>
@@ -571,26 +637,62 @@ export default function App() {
               type="number"
               step="0.001"
               value={params.dividend}
-              onChange={(event) =>
-                setParams((prev) => ({ ...prev, dividend: event.target.value }))
-              }
+              onChange={updateParam("dividend")}
             />
           </div>
+
           <div className="field">
             <label>
               <span>Option type</span>
               <InfoBadge text={inputHelp.optionType} />
             </label>
-            <select
-              value={params.optionType}
-              onChange={(event) =>
-                setParams((prev) => ({ ...prev, optionType: event.target.value }))
-              }
-            >
-              <option value="call">Call</option>
-              <option value="put">Put</option>
+            <select value={params.optionType} onChange={(event) => setParams((prev) => ({ ...prev, optionType: event.target.value }))}>
+              <option value="call">European Call</option>
+              <option value="put">European Put</option>
             </select>
           </div>
+
+          <div className="field">
+            <label>
+              <span>Method</span>
+              <InfoBadge text="Choose Black-Scholes or Monte Carlo." />
+            </label>
+            <select value={params.method} onChange={updateParam("method")}>
+              <option value="blackscholes">Black-Scholes</option>
+              <option value="montecarlo">Monte Carlo</option>
+            </select>
+          </div>
+
+          {isMonteCarlo && (
+            <>
+              <div className="field">
+                <label>
+                  <span>Monte Carlo paths</span>
+                  <InfoBadge text="Number of simulated paths." />
+                </label>
+                <input type="number" value={params.num_paths} onChange={updateParam("num_paths")} />
+              </div>
+
+              <div className="field">
+                <label>
+                  <span>Seed</span>
+                  <InfoBadge text="Random seed." />
+                </label>
+                <input type="number" value={params.seed} onChange={updateParam("seed")} />
+              </div>
+
+              <div className="field">
+                <label>
+                  <span>Antithetic</span>
+                  <InfoBadge text="Use antithetic variates." />
+                </label>
+                <select value={params.antithetic} onChange={updateParam("antithetic")}>
+                  <option value="true">True</option>
+                  <option value="false">False</option>
+                </select>
+              </div>
+            </>
+          )}
         </div>
       </section>
 
@@ -610,7 +712,7 @@ export default function App() {
                 <InfoBadge text={outputHelp[key]} />
               </div>
               <div className="stat-value">
-                {priceData ? priceData[key].toFixed(6) : "--"}
+                {priceData && Number.isFinite(Number(priceData[key])) ? safeFixed(priceData[key], 6) : "--"}
               </div>
             </div>
           ))}
@@ -621,10 +723,7 @@ export default function App() {
         <div className="panel-header">
           <div className="header-title">
             <h2>Comparison mode</h2>
-            <InfoBadge
-              label="Comparison help"
-              text="Save the current snapshot and compare live option outputs against it."
-            />
+            <InfoBadge label="Comparison help" text="Save a snapshot and compare live outputs." />
           </div>
           <div className="chart-controls">
             <div className="pill">
@@ -651,79 +750,72 @@ export default function App() {
             ))}
           </div>
         ) : (
-          <div className="compare-empty">Save a snapshot to compare the current price and Greeks against it.</div>
+          <div className="compare-empty">Save a snapshot to compare live outputs.</div>
         )}
       </section>
 
       <section className="panel chart-panel">
         <div className="panel-header">
           <div className="header-title">
-            <h2>Greek curve</h2>
+            <h2>{isMonteCarlo ? "Price convergence" : "Greek curve"}</h2>
             <InfoBadge label="Greek curve help" text={outputHelp.greekCurve} />
           </div>
           <div className="chart-controls">
-            <select
-              value={greek}
-              onChange={(event) => setGreek(event.target.value)}
-              aria-label="Select Greek output"
-            >
-              {Object.keys(greekLabels).map((key) => (
-                <option key={key} value={key}>
-                  {greekLabels[key]}
-                </option>
-              ))}
-            </select>
-            <div className="range-group">
-              <div className="field small">
-                <label>
-                  <span>Min</span>
-                  <InfoBadge text={outputHelp.range} />
-                </label>
-                <input
-                  type="number"
-                  value={range.min}
-                  onChange={(event) =>
-                    setRange((prev) => ({ ...prev, min: event.target.value }))
-                  }
-                />
-              </div>
-              <div className="field small">
-                <label>
-                  <span>Max</span>
-                  <InfoBadge text={outputHelp.range} />
-                </label>
-                <input
-                  type="number"
-                  value={range.max}
-                  onChange={(event) =>
-                    setRange((prev) => ({ ...prev, max: event.target.value }))
-                  }
-                />
-              </div>
-              <div className="field small">
-                <label>
-                  <span>Points</span>
-                  <InfoBadge text="Number of sample points used to draw the curve." />
-                </label>
-                <input
-                  type="number"
-                  value={range.points}
-                  onChange={(event) =>
-                    setRange((prev) => ({ ...prev, points: event.target.value }))
-                  }
-                />
-              </div>
-            </div>
+            {!isMonteCarlo && (
+              <>
+                <select
+                  value={greek}
+                  onChange={(event) => setGreek(event.target.value)}
+                  aria-label="Select Greek output"
+                >
+                  {Object.keys(greekLabels).map((key) => (
+                    <option key={key} value={key}>
+                      {greekLabels[key]}
+                    </option>
+                  ))}
+                </select>
+
+                <div className="range-group">
+                  <div className="field small">
+                    <label>
+                      <span>Min</span>
+                      <InfoBadge text={outputHelp.range} />
+                    </label>
+                    <input
+                      type="number"
+                      value={range.min}
+                      onChange={updateRange("min")}
+                    />
+                  </div>
+
+                  <div className="field small">
+                    <label>
+                      <span>Max</span>
+                      <InfoBadge text={outputHelp.range} />
+                    </label>
+                    <input
+                      type="number"
+                      value={range.max}
+                      onChange={updateRange("max")}
+                    />
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         </div>
-        <GreekChart data={curveData} title={`${greekLabels[greek]} vs Spot`} />
+        {isMonteCarlo ? (
+          <MonteCarloConvergence basePayload={payload} />
+        ) : (
+          <GreekChart data={curveData} title={`${greekLabels[greek]} vs Spot`} currentSpot={payload.spot} />
+        )}
       </section>
 
       <section className="panel chart-panel">
         <div className="panel-header">
           <div className="header-title">
             <h2>Monthly price history</h2>
-            <InfoBadge label="Historical data help" text="Monthly closes from Polygon shown as a time series." />
+            <InfoBadge label="Historical data help" text="Historical closes from Polygon." />
           </div>
           <div className="chart-controls">
             <div className="field small">
@@ -734,21 +826,17 @@ export default function App() {
               <input
                 type="text"
                 value={history.symbol}
-                onChange={(event) =>
-                  setHistory((prev) => ({ ...prev, symbol: event.target.value }))
-                }
+                onChange={updateHistory("symbol")}
               />
             </div>
             <div className="field small">
               <label>
-                <span>Range</span>
+                <span>Timeframe</span>
                 <InfoBadge text={inputHelp.outputsize} />
               </label>
               <select
                 value={history.outputsize}
-                onChange={(event) =>
-                  setHistory((prev) => ({ ...prev, outputsize: event.target.value }))
-                }
+                onChange={updateHistory("outputsize")}
               >
                 <option value="compact">Compact</option>
                 <option value="full">Full</option>

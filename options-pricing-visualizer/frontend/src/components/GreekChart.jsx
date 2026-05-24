@@ -1,7 +1,14 @@
 import { useEffect, useRef } from "react";
 import * as d3 from "d3";
 
-export default function GreekChart({ data, title }) {
+/**
+ * @param {{
+ *  data: Array<{ spot: number, value: number }>,
+ *  title: string,
+ *  currentSpot?: number | null
+ * }} props
+ */
+export default function GreekChart({ data, title, currentSpot = null }) {
   const svgRef = useRef(null);
 
   useEffect(() => {
@@ -92,6 +99,36 @@ export default function GreekChart({ data, title }) {
     const focus = svg.append("g").attr("class", "chart-focus").style("display", "none");
     focus.append("circle").attr("r", 4);
     const focusText = focus.append("text").attr("y", -12);
+
+    // Draw current spot marker (vertical line + dot) if requested
+    if (currentSpot != null) {
+      const nearestIndex = d3.bisector((d) => d.spot).left(data, currentSpot);
+      const prev = data[Math.max(0, nearestIndex - 1)] || data[0];
+      const next = data[Math.min(data.length - 1, nearestIndex)] || data[data.length - 1];
+      const point = Math.abs(currentSpot - prev.spot) < Math.abs(next.spot - currentSpot) ? prev : next;
+
+      svg
+        .append("line")
+        .attr("class", "current-marker")
+        .attr("x1", x(point.spot))
+        .attr("x2", x(point.spot))
+        .attr("y1", margin.top)
+        .attr("y2", height - margin.bottom);
+
+      svg
+        .append("circle")
+        .attr("class", "current-dot")
+        .attr("cx", x(point.spot))
+        .attr("cy", y(point.value))
+        .attr("r", 4);
+
+      svg
+        .append("text")
+        .attr("class", "current-label")
+        .attr("x", x(point.spot) + 8)
+        .attr("y", y(point.value) - 8)
+        .text(`${point.value.toFixed(4)}`);
+    }
 
     const bisect = d3.bisector((d) => d.spot).left;
 

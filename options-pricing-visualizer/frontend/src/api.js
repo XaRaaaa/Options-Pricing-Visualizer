@@ -38,3 +38,7 @@ export function fetchHistory(payload) {
 export function fetchOptions(payload) {
   return request("/api/options", payload);
 }
+
+export function fetchMonteCarlo(payload) {
+  return request("/api/montecarlo", payload);
+}
