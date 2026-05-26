@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import * as d3 from "d3";
-import { fetchMonteCarlo } from "../api";
+import { fetchMC } from "../api";
 
 const MIN_PATHS = 100;
 const MAX_PATHS = 2000000;
@@ -55,7 +55,7 @@ export default function MonteCarloConvergence({ basePayload }) {
       const results = [];
       for (const n of pathCounts) {
         try {
-          const res = await fetchMonteCarlo({ ...basePayload, num_paths: n });
+          const res = await fetchMC({ ...basePayload, num_paths: n });
           if (!mounted) return;
           results.push({ n, price: res.price, stderr: res.stderr });
           setSeries([...results]);
@@ -86,7 +86,7 @@ export default function MonteCarloConvergence({ basePayload }) {
         .attr("y", height / 2)
         .attr("text-anchor", "middle")
         .attr("class", "chart-empty")
-        .text(loading ? "Running Monte Carlo..." : "No convergence data yet");
+        .text(loading ? "Running MC..." : "No convergence data yet");
       return;
     }
 
@@ -142,7 +142,7 @@ export default function MonteCarloConvergence({ basePayload }) {
       .attr("class", "chart-title")
       .attr("x", margin.left)
       .attr("y", 18)
-      .text("Price convergence vs Monte Carlo paths");
+      .text("Price convergence vs MC paths");
   }, [series, loading]);
 
   return <svg ref={svgRef} className="chart" role="img" />;

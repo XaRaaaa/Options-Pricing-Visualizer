@@ -39,6 +39,8 @@ export function fetchOptions(payload) {
   return request("/api/options", payload);
 }
 
-export function fetchMonteCarlo(payload) {
+export function fetchMC(payload) {
   return request("/api/montecarlo", payload);
 }
+
+export const fetchMonteCarlo = fetchMC;

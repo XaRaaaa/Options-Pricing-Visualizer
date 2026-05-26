@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from .bs import SUPPORTED_GREEKS, price_and_greeks
-from .monte_carlo import monte_carlo_price
+from .mc import monte_carlo_price
 
 
 class OptionParams(BaseModel):
@@ -276,7 +276,7 @@ def price(params: OptionParams) -> dict[str, object]:
 
         return {
             "option_type": option_type,
-            "method": "montecarlo",
+            "method": "mc",
             "price": float(mc["price"]),
             "stderr": float(mc["stderr"]),
             "num_paths": int(mc["num_paths"]),

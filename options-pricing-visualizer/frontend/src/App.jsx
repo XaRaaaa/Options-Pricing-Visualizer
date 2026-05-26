@@ -268,7 +268,7 @@ export default function App() {
   const [baselineSnapshot, setBaselineSnapshot] = useState(() => loadBaselineSnapshot());
   const [shareState, setShareState] = useState({ copied: false, exported: false });
 
-  const isMonteCarlo = params.method === "montecarlo";
+  const isMonteCarlo = ["montecarlo", "mc"].includes(params.method);
 
   const updateParam = (field) => (event) => {
     setParams((prev) => ({ ...prev, [field]: event.target.value }));
@@ -530,7 +530,7 @@ export default function App() {
           <span className="eyebrow">Options Pricing Visualizer</span>
           <h1>Explore Options pricing models</h1>
           <p>
-            Change inputs, switch between Black-Scholes and Monte Carlo, and view
+            Change inputs, switch between Black-Scholes and MC, and view
             graphs.
           </p>
         </div>
@@ -545,7 +545,7 @@ export default function App() {
           <div className="hero-subtext">
             {params.optionType.toUpperCase()} - Strike {params.strike}
           </div>
-            {priceData && priceData.method === "montecarlo" && (
+            {priceData && ["montecarlo", "mc"].includes(priceData.method) && (
               <div className="hero-meta">
                 <small>
                   standard error: {safeFixed(priceData.stderr, 6)} • paths: {priceData.num_paths}
@@ -655,11 +655,11 @@ export default function App() {
           <div className="field">
             <label>
               <span>Method</span>
-              <InfoBadge text="Choose Black-Scholes or Monte Carlo." />
+              <InfoBadge text="Choose Black-Scholes or MC." />
             </label>
             <select value={params.method} onChange={updateParam("method")}>
               <option value="blackscholes">Black-Scholes</option>
-              <option value="montecarlo">Monte Carlo</option>
+              <option value="montecarlo">MC</option>
             </select>
           </div>
 
@@ -667,7 +667,7 @@ export default function App() {
             <>
               <div className="field">
                 <label>
-                  <span>Monte Carlo paths</span>
+                  <span>MC paths</span>
                   <InfoBadge text="Number of simulated paths." />
                 </label>
                 <input type="number" value={params.num_paths} onChange={updateParam("num_paths")} />
@@ -696,7 +696,7 @@ export default function App() {
         </div>
       </section>
       <footer className="disclaimer" style={{ padding: "18px 20px", fontSize: "0.85rem", color: "#666" }}>
-        This tool is for informational and educational purposes only. It estimates option values using Black‑Scholes and Monte Carlo models and is not financial advice. Calculations are theoretical and omit real‑world factors; consult a licensed financial advisor before investing.
+        This tool is for informational and educational purposes only. It estimates option values using Black‑Scholes and MC models and is not financial advice. Calculations are theoretical and omit real‑world factors; consult a licensed financial advisor before investing.
       </footer>
 
       <section className="panel stats">
